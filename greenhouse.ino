@@ -259,3 +259,9 @@ int leeJoystick(){ //считывание
 //    }
   lastJoyPos=joyRead;
 }
+
+
+
+
+
+
