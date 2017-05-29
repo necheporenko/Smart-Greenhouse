@@ -12,6 +12,7 @@
 //----------------------------------------------------
 // 2. Pines
 //----------------------------------------------------
+#define HUMIDITY A2
 #define xPin     A1   
 #define yPin     A0   
 #define kPin      7   
@@ -71,8 +72,6 @@ long intervalUpdateVars = 5000;
 unsigned long previousMillis = 0; 
 //long intervalUpdateVars = 2000; // половина периода мигания (в миллисекундах)
 
-
-
 // water level
 int duration, distance;  
 
@@ -97,12 +96,14 @@ int insideT;
 //joystick
 int btn = digitalRead(kPin);
 
+//fc-28
+int insideH;
+int humidity;
 //state
 bool isWatering = false;
 bool isPumping = false;
-bool isPress = false;
+bool isOpen = false;
 bool buttonWasUp = true;  // была ли кнопка отпущена?
-
 //----------------------------------------------------
 // 4. Objetos
 //----------------------------------------------------
@@ -285,6 +286,14 @@ void menu22(unsigned long &currentMillis){
    lcd.print(insideT);
    lcd.print(".00");
    lcd.print("C;");
+//   if (insideH=200) {
+//    lcd.print("Air");
+//   } else {
+//    lcd.print("H:");
+//    lcd.print(insideH);
+//    lcd.print("%");
+//   }
+//   }
   } 
 }
 
@@ -326,12 +335,12 @@ void menu4(){
     buttonIsUp = digitalRead(kPin);
     if (!buttonIsUp) {  // если она всё ещё нажата...
       // ...это клик! 
-      isPress = !isPress;
+      isOpen = !isOpen;
       Serial.println("Press Button");
     }
   }
   lcd.setCursor(0,1);
-  if(!isPress) {
+  if(!isOpen) {
     lcd.print("Close");
   } else {
     lcd.print("Open ");  
@@ -504,6 +513,14 @@ void insideDataTemperature() {
   insideT = insideT>>4;
 }
 
+void insideDataHumidity() {
+humidity = analogRead(HUMIDITY);
+if (humidity > 950) {
+  insideH = 200;
+} else if (100<humidity<950) {
+  insideH = 100-(humidity-100)/8.5;
+}
+
 void showVariables() {
   Serial.print("Variables: ");
   Serial.print("Water level:");
@@ -514,14 +531,16 @@ void showVariables() {
   Serial.print(outsideH);
   Serial.print(";  In_T:");
   Serial.print(insideT);
+  Serial.print(";  In_H:");
+  Serial.print(insideH);
   Serial.println();
   Serial.print("State: ");
   Serial.print("isWatering: ");
   Serial.print(isWatering);
   Serial.print(";  isPumping: ");
   Serial.print(isPumping);
-  Serial.print(";  isPress: ");
-  Serial.print(isPress);
+  Serial.print(";  isOpen: ");
+  Serial.print(isOpen);
   Serial.println();
 }
 
