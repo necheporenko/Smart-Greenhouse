@@ -28,49 +28,29 @@ OneWire ds(10);
 //----------------------------------------------------
 // 3. Variables y Comandos
 //----------------------------------------------------
-int tCount1;
-bool refresh;//lcd clear On/Off
-//leerJoystick
-int joyRead;
-int joyPos; 
-int lastJoyPos;
-long lastDebounceTime = 0; 
-long debounceDelay = 70;                 //user define
-//Control Joystick
-bool PQCP;
-bool editMode;
-//sistema de menus
-int menuLevel1;  
-int menuLevel2;  
-//editmode
-byte n[19];
-int lastN;
-int lcdX;
-//int lcdY;
-bool exiT;
 
 //common prevMillis
+unsigned long previousMillis = 0; 
 unsigned long previousMillisInMenuWaterLevel = 0; 
 unsigned long previousMillisInMenuTime = 0;
 unsigned long previousMillisInMenuOutsideData = 0;
-unsigned long previousMillisInMenuInsideDataTemperature = 0;
+unsigned long previousMillisInMenuInsideData = 0;
+unsigned long previousMillisFunctionWatering = 0;
 unsigned long previousMillisEventListener = 0; 
-unsigned long previousMillisIsWatering = 0; 
-unsigned long previousMillisFunctionWatering = 0; 
+unsigned long previousMillisIsWatering = 0;
 unsigned long previousMillisIsPumping = 0; 
-unsigned long previousMillisFunctionPumping = 0; 
+unsigned long previousMillisIsAeration = 0;
 unsigned long previousMillisUpdateVars = 0; 
 
-long intervalInMenu = 1000; // общий интервал 
-long intervalEventListener = 2000; 
-long intervalIsWatering = 2000; 
-long intervalIsPumping = 2000; 
-long intervalFunctionWatering = 4000; 
-long intervalFunctionPumping = 4000;
-long intervalUpdateVars = 5000; 
-
-unsigned long previousMillis = 0; 
-//long intervalUpdateVars = 2000; // половина периода мигания (в миллисекундах)
+int intervalInMenu = 1000; // общий интервал 
+int intervalEventListener = 2000; 
+int intervalIsWatering = 4000; 
+int intervalIsPumping = 4000; 
+int intervalIsAeration = 4000;
+int intervalFunctionWatering = 2000; 
+int intervalFunctionPumping = 2000;
+int intervalFunctionsAeration = 2000;
+int intervalUpdateVars = 5000; 
 
 // water level
 int duration, distance;  
@@ -84,11 +64,11 @@ tmElements_t tm;
 bool parse=false;
 bool config=false;
 int zxc = 0;
-int seconds; 
+int seconds, minutes, hours; 
 
 //DHT
-float outsideT;
-float outsideH;
+int outsideT;
+int outsideH;
 
 //ds18b20
 int insideT;
@@ -98,12 +78,25 @@ int btn = digitalRead(kPin);
 
 //fc-28
 int insideH;
-int humidity;
+unsigned int humidity = 0;
 //state
 bool isWatering = false;
 bool isPumping = false;
 bool isOpen = false;
 bool buttonWasUp = true;  // была ли кнопка отпущена?
+
+bool refresh;//lcd clear On/Off
+//leerJoystick
+int joyRead;
+int joyPos; 
+int lastJoyPos;
+long lastDebounceTime = 0; 
+long debounceDelay = 70;                 
+//Control Joystick
+bool PQCP;
+// Рівні меню
+int menuLevel1;  
+int menuLevel2;  
 //----------------------------------------------------
 // 4. Objetos
 //----------------------------------------------------
@@ -146,14 +139,11 @@ void loop() {
   controlJoystick();
   menu(currentMillis);
   eventListener(currentMillis);
-   if(currentMillis - previousMillisFunctionWatering >= intervalFunctionWatering) {
-    previousMillisFunctionWatering = currentMillis;
-      Watering(currentMillis);
-   }
 
+  Watering(currentMillis);
   Pumping(currentMillis);
+  Aeration(currentMillis);
 }
-
 //====================================================
 // Menu
 //====================================================
@@ -201,24 +191,6 @@ void menu0(){
   lcd.setCursor(0,1);
   lcd.print("Smart Greenhouse");
 }
-//----------------------------------------------------
-// Menu 1
-//----------------------------------------------------
-void menu1(){
-  if (refresh){lcd.clear();refresh=0;}
-  lcd.setCursor(0,0);
-  lcd.print("Menu 1 TH");
-  lcd.setCursor(0,1);
-//++++++++++++++++++++
-  while(editMode){
-    controlJoystick();
-    lcd.setCursor(lcdX,1);
-    if(n[lcdX]!=lastN){
-      lcd.print(n[lcdX]);
-      lastN=n[lcdX];
-    }
-  }
-}
 //-------------------------------------------------1.1 TIME
 void menu11(unsigned long &currentMillis){
   if (refresh){lcd.clear();refresh=0;}
@@ -226,7 +198,21 @@ void menu11(unsigned long &currentMillis){
 
   if(currentMillis - previousMillisInMenuTime >= intervalInMenu) {
    previousMillisInMenuTime = currentMillis;
-   showTime();
+    if (RTC.read(tm)) {
+    lcd.print("Time: ");
+    print2digits(tm.Hour);
+    lcd.write(':');
+    print2digits(tm.Minute);
+    lcd.write(':');
+    print2digits(tm.Second);
+    lcd.setCursor(0,1);
+    lcd.print("Date: ");
+    lcd.print(tm.Day);
+    lcd.write('/');
+    lcd.print(tm.Month); 
+    lcd.write('/');
+    lcd.print(tmYearToCalendar(tm.Year));
+    }
   }
 }
 //-------------------------------------------------1.2 WATER LEVEL
@@ -243,7 +229,6 @@ void menu12(unsigned long &currentMillis){
    lcd.print(" cm"); 
   } 
 }
-
 //----------------------------------------------------
 // Menu 2
 //----------------------------------------------------
@@ -266,12 +251,11 @@ void menu21(unsigned long &currentMillis){
    lcd.print("T:");
    lcd.print(outsideT);
    lcd.print("C;");
+   lcd.setCursor(10,1);
    lcd.print("H:");
    lcd.print(outsideH);
    lcd.print("%;");
   } 
-  Serial.print(outsideT);
-  Serial.print(outsideH); 
 }
 //-------------------------------------------------2.2
 void menu22(unsigned long &currentMillis){
@@ -279,45 +263,73 @@ void menu22(unsigned long &currentMillis){
   lcd.setCursor(5,0);
   lcd.print("INSIDE");
   lcd.setCursor(0,1);
-  if(currentMillis - previousMillisInMenuInsideDataTemperature >= intervalInMenu) {
-   previousMillisInMenuInsideDataTemperature = currentMillis;
+  if(currentMillis - previousMillisInMenuInsideData >= intervalInMenu) {
+   previousMillisInMenuInsideData = currentMillis;
    insideDataTemperature();
+   insideDataHumidity();
    lcd.print("T:");
    lcd.print(insideT);
-   lcd.print(".00");
    lcd.print("C;");
-//   if (insideH=200) {
-//    lcd.print("Air");
-//   } else {
-//    lcd.print("H:");
-//    lcd.print(insideH);
-//    lcd.print("%");
-//   }
-//   }
-  } 
-}
-
+   lcd.setCursor(10,1);
+   if (insideH==200) {
+    lcd.print("H:Not;");
+   } else {
+    lcd.print("H:");
+    lcd.print(insideH);
+    lcd.print("%;");
+   }
+  }
+ } 
 //----------------------------------------------------
 // Menu 3
 //----------------------------------------------------
 void menu3(){
   if (refresh){lcd.clear();refresh=0;}
   lcd.setCursor(0,0);
-  lcd.print("Menu 3 SHOW EXTRA");
+  lcd.print("MANUAL SELECTION");
 }
-//-------------------------------------------------2.1
+//-------------------------------------------------
 void menu31(){
   if (refresh){lcd.clear();refresh=0;}
   lcd.setCursor(0,0);
-  lcd.print("Menu 3.1 extra1");
+  lcd.print("Watering:");
+  bool buttonIsUp = digitalRead(kPin);
+    if (buttonWasUp && !buttonIsUp) {
+    delay(100);
+    buttonIsUp = digitalRead(kPin);
+    if (!buttonIsUp) {  
+      isWatering = !isWatering;
+      Serial.println("Press Button");
+    }
+  }
+  lcd.setCursor(0,1);
+  if(!isWatering) {
+    lcd.print("OFF");
+  } else {
+    lcd.print("ON ");  
+  }
 }
-//-------------------------------------------------2.2
+//-------------------------------------------------
 void menu32(){
   if (refresh){lcd.clear();refresh=0;}
   lcd.setCursor(0,0);
-  lcd.print("Menu 3.2 extra2");
+  lcd.print("Pumping:");
+  bool buttonIsUp = digitalRead(kPin);
+    if (buttonWasUp && !buttonIsUp) {
+    delay(100);
+    buttonIsUp = digitalRead(kPin);
+    if (!buttonIsUp) {  
+      isPumping = !isPumping;
+      Serial.println("Press Button");
+    }
+  }
+  lcd.setCursor(0,1);
+  if(!isPumping) {
+    lcd.print("OFF");
+  } else {
+    lcd.print("ON ");  
+  }
 }
-
 //----------------------------------------------------
 // Menu 4
 //----------------------------------------------------
@@ -327,14 +339,9 @@ void menu4(){
   lcd.print("Window:");
   bool buttonIsUp = digitalRead(kPin);
     if (buttonWasUp && !buttonIsUp) {
-    // ...может это «клик», а может и ложный сигнал (дребезг),
-    // возникающий в момент замыкания/размыкания пластин кнопки,
-    // поэтому даём кнопке полностью «успокоиться»...
     delay(100);
-    // ...и считываем сигнал снова
     buttonIsUp = digitalRead(kPin);
-    if (!buttonIsUp) {  // если она всё ещё нажата...
-      // ...это клик! 
+    if (!buttonIsUp) {  
       isOpen = !isOpen;
       Serial.println("Press Button");
     }
@@ -346,7 +353,6 @@ void menu4(){
     lcd.print("Open ");  
   }
 }
-
 //====================================================
 // Control Joystic
 //====================================================
@@ -354,35 +360,19 @@ void controlJoystick(){
   leeJoystick();
   if(PQCP) {
     PQCP=0;
-    if (joyPos==5){editMode=!editMode;}
-    switch (editMode){
-//       case 1: 
-//          lcd.blink(); //мигание курсора, для меню 1 
-//          if (joyPos==4&&n[lcdX]<9){n[lcdX]++;   //arriba - вверх
-//              refresh=0;}
-//          if (joyPos==3&&n[lcdX]>0){n[lcdX]--;   //abajo - вниз 
-//              refresh=0;} 
-//          if (joyPos==1&&lcdX<19){lcdX++;        //derecha - вправо
-//            refresh=0;}
-//          if (joyPos==2&&lcdX>0){lcdX--;         //izq - влево
-//           refresh=0;}
-//        break;
-        case 0:
-          lcd.noBlink();
-          if (menuLevel1<2&&joyPos==3){menuLevel1++;    //abajo
-            refresh=1;
-            menuLevel2=0;}
-          if (menuLevel1>-1&&joyPos==4){menuLevel1--;    //arriba
-            menuLevel2=0;
-            refresh=1;}
-          if (menuLevel2<1&&joyPos==1){menuLevel2++;   //derecha
-            refresh=1;}
-          if (menuLevel2>-1&&joyPos==2){menuLevel2--;    //izq
-           refresh=1;}
-        }//!edit
-  }//PQCP
+      if (menuLevel1<2&&joyPos==3){menuLevel1++;    //abajo
+        refresh=1;
+        menuLevel2=0;}
+      if (menuLevel1>-1&&joyPos==4){menuLevel1--;    //arriba
+        menuLevel2=0;
+        refresh=1;}
+      if (menuLevel2<1&&joyPos==1){menuLevel2++;   //derecha
+        refresh=1;}
+      if (menuLevel2>-1&&joyPos==2){menuLevel2--;    //izq
+       refresh=1;}
+  }
 }
-int leeJoystick(){ //считывание 
+int leeJoystick(){                //считывание 
   int x = analogRead(xPin);
   int y = analogRead(yPin);
   int k = digitalRead(kPin);
@@ -398,13 +388,8 @@ int leeJoystick(){ //считывание
     joyPos=joyRead;
     if(!PQCP){PQCP=1;}
     }
-//  if(((millis() - lastDebounceTime) > (5*debounceDelay))&&(joyPos==3||joyPos==4)){
-//    joyPos=joyRead;                     //repeat time only for UP/DOWN
-//    if(!PQCP){PQCP=1;}
-//    }
   lastJoyPos=joyRead;
 }
-
 //====================================================
 // Get time
 //====================================================
@@ -438,22 +423,10 @@ bool getDate(const char *str)
 
 void showTime() {
   if (RTC.read(tm)) {
-    lcd.print("Time: ");
-    print2digits(tm.Hour);
-    lcd.write(':');
-    print2digits(tm.Minute);
-    lcd.write(':');
-    print2digits(tm.Second);
-    lcd.setCursor(0,1);
-    lcd.print("Date: ");
-    lcd.print(tm.Day);
-    lcd.write('/');
-    lcd.print(tm.Month); 
-    lcd.write('/');
-    lcd.print(tmYearToCalendar(tm.Year));
     seconds = tm.Second;
+    minutes = tm.Minute;
+    hours = tm.Hour; 
   }     
-    Serial.println("hi");
 }
 
 void print2digits(int number) {
@@ -465,20 +438,16 @@ void print2digits(int number) {
 
 void eventListener(unsigned long &currentMillis) {
   if(currentMillis - previousMillisEventListener >= intervalEventListener) {
-    previousMillisEventListener = currentMillis;
-//     if (RTC.read(tm)) {
-//      seconds = tm.Second;
-////      Serial.println(seconds);   
-//     }
-     showVariables();
-     
-      if(currentMillis - previousMillisUpdateVars >= intervalUpdateVars) {
-       previousMillisUpdateVars = currentMillis;
-       waterLevel();
-       outsideData();
-       insideDataTemperature();
-       Serial.println("Action");
-      }    
+    previousMillisEventListener = currentMillis;  
+    showVariables();   
+    if(currentMillis - previousMillisUpdateVars >= intervalUpdateVars) {
+     previousMillisUpdateVars = currentMillis;
+     waterLevel();
+     outsideData();
+     insideDataTemperature();
+     insideDataHumidity();
+     showTime();
+    }    
   }
 }
 
@@ -490,7 +459,6 @@ void waterLevel() {
   digitalWrite(Trig, LOW); 
   duration = pulseIn(Echo, HIGH); 
   distance = duration / 58;
-
 }
 
 void outsideData() {
@@ -503,7 +471,6 @@ void insideDataTemperature() {
   ds.reset(); 
   ds.write(0xCC);
   ds.write(0x44);
-  //delay(750);
   ds.reset();
   ds.write(0xCC);
   ds.write(0xBE);
@@ -515,13 +482,22 @@ void insideDataTemperature() {
 
 void insideDataHumidity() {
 humidity = analogRead(HUMIDITY);
-if (humidity > 950) {
-  insideH = 200;
-} else if (100<humidity<950) {
-  insideH = 100-(humidity-100)/8.5;
+  if (humidity > 950) {
+    insideH = 200;
+  } else if (100<humidity<950) {
+    insideH = 100-(humidity-100)/8.5;
+  }
 }
 
 void showVariables() {
+  if (RTC.read(tm)) {
+    Serial.print(hours);  
+    Serial.print(":");
+    Serial.print(minutes);
+    Serial.print(":");
+    Serial.print(seconds);
+  }
+  Serial.println();
   Serial.print("Variables: ");
   Serial.print("Water level:");
   Serial.print(distance);
@@ -571,5 +547,18 @@ void Pumping(unsigned long &currentMillis) {
         isPumping = false;
        }
     }
+  }
+}
+
+void Aeration(unsigned long &currentMillis) {
+  if(currentMillis - previousMillisIsAeration >= intervalIsAeration) {
+    previousMillisIsAeration = currentMillis;
+    if(insideT - outsideT > 20) {
+      Serial.println("AERATION!");
+      isOpen = true;
+    } else if (insideT < 25) {
+      Serial.println("STOP AERATION!");
+      isOpen = false;
+     }
   }
 }
